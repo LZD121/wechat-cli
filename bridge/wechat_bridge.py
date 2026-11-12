@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Local read-only bridge between the official WeChat 4.x client and a TUI.
+"""Local bridge between the official WeChat 4.x client and a TUI.
 
 The bridge reads the logged-in client's local SQLCipher databases through
-wechatauto-replica. It never logs in, never sends messages, and only binds to
-loopback by default. Sending is deliberately absent from this first version.
+wechatauto-replica. It never logs in. It is read-only by default; --allow-send
+enables human-paced text sends with database read-back verification.
 """
 
 from __future__ import annotations
