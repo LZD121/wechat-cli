@@ -201,6 +201,11 @@ func visibleChatMessage(v native.Message) bool {
 	}
 	return v.Peer != "" && v.Type != 51 && v.Type != 9999
 }
+
+// Official accounts (公众号/服务号) use the gh_ username prefix.
+func isOfficialAccount(peer string) bool {
+	return strings.HasPrefix(strings.ToLower(peer), "gh_")
+}
 func chatSafeText(s string) string {
 	s = ansi.Strip(strings.ToValidUTF8(s, "�"))
 	return strings.Map(func(r rune) rune {
@@ -333,6 +338,9 @@ func (m *chatModel) rebuildRows() {
 	m.rows = nil
 	query := strings.ToLower(strings.TrimSpace(m.query))
 	for peer, c := range peers {
+		if isOfficialAccount(peer) && query == "" && peer != m.selected {
+			continue
+		}
 		if latest, ok := m.latest[peer]; ok {
 			c.Last = latest
 		}
@@ -1067,7 +1075,10 @@ func nativeTUI(ctx context.Context, store Store, args []string, requested string
 
 func (m chatModel) totalUnread() int {
 	n := 0
-	for _, count := range m.unread {
+	for peer, count := range m.unread {
+		if isOfficialAccount(peer) {
+			continue
+		}
 		n += count
 	}
 	return n

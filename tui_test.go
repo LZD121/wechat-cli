@@ -297,3 +297,43 @@ func TestQuotedMessageViewerAndReplySelection(t *testing.T) {
 		t.Fatal("private contact remark would leak in an outgoing quote")
 	}
 }
+
+func TestTUIOfficialAccountsHiddenFromChatList(t *testing.T) {
+	data := chatSnapshot{
+		Contacts: map[string]native.Contact{
+			"alice":   {Username: "alice", Nickname: "Alice"},
+			"gh_news": {Username: "gh_news", Nickname: "Daily News"},
+		},
+		Messages: []native.Message{
+			{ID: "1", From: "alice", To: "me", Peer: "alice", Type: 1, Text: "hello", Timestamp: 2},
+			{ID: "2", From: "gh_news", To: "me", Peer: "gh_news", Type: 1, Text: "headline", Timestamp: 3},
+		},
+	}
+	m := newChatModel(context.Background(), &fakeChatBackend{}, "me", native.AndroidTabletProfile, data, true)
+	if len(m.rows) != 1 || m.rows[0].Peer != "alice" {
+		t.Fatalf("official account leaked into chat list: %#v", m.rows)
+	}
+	m.unread["alice"] = 1
+	m.unread["gh_news"] = 5
+	if got := m.totalUnread(); got != 1 {
+		t.Fatalf("official account unread counted: %d", got)
+	}
+	m.query = "news"
+	m.rebuildRows()
+	found := false
+	for _, row := range m.rows {
+		if row.Peer == "gh_news" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("search should still find official accounts")
+	}
+	m.query = ""
+	m.rebuildRows()
+	m.selectPeer("gh_news")
+	m.rebuildRows()
+	if len(m.rows) != 2 || m.selected != "gh_news" {
+		t.Fatalf("selected official account should stay visible: %#v", m.rows)
+	}
+}
