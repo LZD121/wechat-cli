@@ -166,6 +166,7 @@ class Bridge:
         self._self: Optional[Dict[str, Any]] = None
         self._nicknames: Dict[str, str] = {}
         self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
         self._flags_cache: Optional[Dict[str, int]] = None
         self._flags_at = 0.0
         self.read_only = read_only
@@ -426,23 +427,26 @@ class Bridge:
             raise BridgeError("bad_request", "chat_id, text and client_id are required", 400)
         if len(text) > 60 * 1024:
             raise BridgeError("bad_request", "message exceeds 60 KiB", 400)
-        with self._lock:
-            cached = self._journal.get(client_id)
-            if cached:
-                if cached.get("accepted"):
-                    return cached["result"]
-                raise BridgeError(
-                    str(cached.get("code") or "send_failed"),
-                    str(cached.get("message") or "previous send was not confirmed"),
-                    int(cached.get("status") or 502),
-                    False,
-                )
-            now = time.monotonic()
-            if now - self._last_send_at < self._min_send_interval:
-                raise BridgeError("rate_limited", "wait before sending another message", 429, True)
-            name = self._target_name(chat_id, chat_name)
-            self._last_send_at = now
-            since = int(time.time())
+        with self._send_lock:
+            with self._lock:
+                cached = self._journal.get(client_id)
+                if cached:
+                    if cached.get("accepted"):
+                        return cached["result"]
+                    raise BridgeError(
+                        str(cached.get("code") or "send_failed"),
+                        str(cached.get("message") or "previous send was not confirmed"),
+                        int(cached.get("status") or 502),
+                        False,
+                    )
+                now = time.monotonic()
+                if now - self._last_send_at < self._min_send_interval:
+                    raise BridgeError("rate_limited", "wait before sending another message", 429, True)
+                name = self._target_name(chat_id, chat_name)
+                self._last_send_at = now
+                since = int(time.time())
+            # Do not hold the read lock while driving the official UI. The TUI
+            # syncs chats/messages through the same bridge and must stay live.
             try:
                 send = self._send_fn or self._default_send
                 response = send(text, name, False)
@@ -450,27 +454,28 @@ class Bridge:
             except Exception as exc:  # noqa: BLE001
                 response = None
                 message = f"send failed: {exc}"
-            row = self._verify_sent(chat_id, text, since)
-            if row is not None:
-                result = {
-                    "accepted": True,
-                    "verified": True,
-                    "client_id": client_id,
-                    "message_id": message_id(row),
-                    "timestamp": normalize_timestamp(row.get("create_time")),
+            with self._lock:
+                row = self._verify_sent(chat_id, text, since)
+                if row is not None:
+                    result = {
+                        "accepted": True,
+                        "verified": True,
+                        "client_id": client_id,
+                        "message_id": message_id(row),
+                        "timestamp": normalize_timestamp(row.get("create_time")),
+                    }
+                    self._journal[client_id] = {"accepted": True, "result": result}
+                    self._save_journal()
+                    return result
+                failure = {
+                    "accepted": False,
+                    "code": "send_unverified",
+                    "message": message or "message was submitted but could not be confirmed in the database",
+                    "status": 502,
                 }
-                self._journal[client_id] = {"accepted": True, "result": result}
+                self._journal[client_id] = failure
                 self._save_journal()
-                return result
-            failure = {
-                "accepted": False,
-                "code": "send_unverified",
-                "message": message or "message was submitted but could not be confirmed in the database",
-                "status": 502,
-            }
-            self._journal[client_id] = failure
-            self._save_journal()
-            raise BridgeError("send_unverified", failure["message"], 502, False)
+                raise BridgeError("send_unverified", failure["message"], 502, False)
 
 
 class Handler(BaseHTTPRequestHandler):

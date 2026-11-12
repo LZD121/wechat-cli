@@ -200,6 +200,51 @@ class BridgeTests(unittest.TestCase):
                 bridge.send("wxid_alice", "hello", "client-3")
             self.assertEqual(len(calls), 1)
 
+
+    def test_reads_are_not_blocked_during_send(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_send(text, who, verify):
+            started.set()
+            release.wait(3)
+            self.db.sent.insert(0, {
+                "local_id": 100,
+                "type": "文本",
+                "sender_username": "wxid_me",
+                "create_time": int(time.time()),
+                "content": text,
+                "sort_seq": 1,
+                "shard": "message_0.db",
+            })
+            return {"status": "成功", "message": "sent"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = wb.Bridge(
+                db_factory=lambda: self.db,
+                read_only=False,
+                send_fn=slow_send,
+                state_dir=directory,
+                min_send_interval=0,
+            )
+            result = {}
+
+            def run_send():
+                try:
+                    result["send"] = bridge.send("wxid_alice", "slow", "slow-client")
+                except Exception as exc:  # noqa: BLE001
+                    result["error"] = exc
+
+            thread = threading.Thread(target=run_send)
+            thread.start()
+            self.assertTrue(started.wait(1))
+            begin = time.monotonic()
+            bridge.messages("wxid_alice", 5, 0)
+            elapsed = time.monotonic() - begin
+            self.assertLess(elapsed, 0.5, "read was blocked by an in-flight send")
+            release.set()
+            thread.join(timeout=10)
+            self.assertTrue(result.get("send", {}).get("accepted"))
 class HTTPTests(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), wb.Handler)
