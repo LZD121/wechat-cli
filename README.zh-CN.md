@@ -255,7 +255,42 @@ Remove-Item "$env:APPDATA\wechat-cli" -Recurse -Force
 
 如果不再需要，从用户 PATH 中移除 `%LOCALAPPDATA%\Programs\wechat-cli`。最后在手机微信的“登录设备管理”中移除 `WeChat CLI`。
 
-## 11. 上游与许可
+## 11. 桌面微信 TUI（实验）
+
+官方微信 4.x + 本地桥接，不伪装协议。默认只读；启动桥时显式加 `--allow-send` 才会开启人工发送。设计见 [`docs/desktop-bridge.zh-CN.md`](docs/desktop-bridge.zh-CN.md)。
+
+前置：
+
+- 官方微信 4.2.x 已登录，桌面保持解锁。
+- Python 3.12 venv 已安装 `wechatauto-replica`。
+
+启动桥（默认只读，仅监听 `127.0.0.1:8765`）：
+
+```cmd
+.venv-bridge\Scripts\python.exe bridge\wechat_bridge.py --port 8765
+```
+
+开启人工发送：
+
+```cmd
+.venv-bridge\Scripts\python.exe bridge\wechat_bridge.py --port 8765 --allow-send
+```
+
+发送会驱动官方微信窗口；桥接限制最小 2 秒间隔，按 `client_id` 幂等，发送后用本地数据库回读确认。结果不确定时不会自动重试。
+
+token 在 `%LOCALAPPDATA%\wechat-bridge\token`，不要分享。
+
+启动 TUI（另开终端）：
+
+```cmd
+wechat desktop --bridge-url http://127.0.0.1:8765
+```
+
+默认读取 token 文件。远程使用时用 SSH 端口转发或 Tailscale，不要把桥接到公网。
+
+当前限制：读取依赖本地 SQLCipher 数据库和 `wechatauto-replica`，微信版本升级可能失效；公众号/服务号默认隐藏；附件只显示预览，不下载媒体；发送是 UI 自动化，失败时可能需要人工确认微信窗口状态。
+
+## 12. 上游与许可
 
 - 上游：<https://github.com/kevmo314/wechat-cli>
 - 协议调研文档：[`docs/native-protocol.md`](docs/native-protocol.md)、[`docs/tablet-protocol.md`](docs/tablet-protocol.md)

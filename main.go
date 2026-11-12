@@ -25,6 +25,7 @@ Usage: wechat [--config-dir DIR] [--backend native|ilink] [--profile phone|table
 
   (no command)                           Open the interactive WeChat client
   tui      [--offline]                   Open the TUI / browse local history
+  desktop  [--bridge-url URL] [--token-file FILE]  Read-only TUI for official WeChat desktop
 
   login    [--qr FILE.png] [--timeout 8m]   Pair using a WeChat QR code
   translate [--id ID | --text TEXT] [--lang en]  Translate using WeChat
@@ -84,6 +85,9 @@ func run(ctx context.Context, args []string) error {
 		command, commandArgs = root.Arg(0), root.Args()[1:]
 	}
 	args = commandArgs
+	if command == "desktop" {
+		return desktopTUI(ctx, commandArgs)
+	}
 	if command == "help" {
 		fmt.Print(usage)
 		return nil

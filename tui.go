@@ -52,7 +52,7 @@ type chatModel struct {
 	ctx                               context.Context
 	backend                           chatBackend
 	owner, profile                    string
-	offline                           bool
+	offline, readOnly                 bool
 	width, height                     int
 	focus                             int
 	search                            textinput.Model
@@ -77,6 +77,7 @@ type chatModel struct {
 	failedDrafts                      map[string]string
 	activity                          map[string]uint64
 	latest                            map[string]native.Message
+	previews                          map[string]native.Message
 	activityClock                     uint64
 	historyHits                       []chatLineRef
 	messageStarts                     map[string]int
@@ -131,7 +132,7 @@ func newChatModel(ctx context.Context, backend chatBackend, owner, profile strin
 		contacts: data.Contacts, seen: map[string]bool{}, drafts: map[string]string{}, unread: map[string]int{},
 		rosterLoaded: map[string]bool{}, rosterLoading: map[string]bool{},
 		readScheduled: map[string]bool{}, readAttempted: map[string]bool{},
-		failedDrafts: map[string]string{}, expandedQuotes: map[string]bool{}, translations: map[string]string{}, translationBusy: map[string]bool{}, language: "en", replyTargets: map[string]native.Message{}, failedReplyTargets: map[string]native.Message{}, activity: map[string]uint64{}, latest: map[string]native.Message{},
+		failedDrafts: map[string]string{}, expandedQuotes: map[string]bool{}, translations: map[string]string{}, translationBusy: map[string]bool{}, language: "en", replyTargets: map[string]native.Message{}, failedReplyTargets: map[string]native.Message{}, activity: map[string]uint64{}, latest: map[string]native.Message{}, previews: map[string]native.Message{},
 		terminalFocused: true, width: 100, height: 30,
 	}
 
@@ -202,8 +203,12 @@ func visibleChatMessage(v native.Message) bool {
 	return v.Peer != "" && v.Type != 51 && v.Type != 9999
 }
 
-// Official accounts (公众号/服务号) use the gh_ username prefix.
-func isOfficialAccount(peer string) bool {
+// Official accounts (公众号/服务号) use the gh_ username prefix. The desktop
+// bridge also marks service accounts whose usernames do not start with gh_.
+func (m chatModel) isOfficialAccount(peer string) bool {
+	if m.contacts[peer].Official {
+		return true
+	}
 	return strings.HasPrefix(strings.ToLower(peer), "gh_")
 }
 func chatSafeText(s string) string {
@@ -322,6 +327,14 @@ func (m *chatModel) rebuildRows() {
 		c.Count++
 		peers[v.Peer] = c
 	}
+	for peer, preview := range m.previews {
+		c := peers[peer]
+		c.Peer = peer
+		if c.Last.ID == "" || preview.Timestamp >= c.Last.Timestamp {
+			c.Last = preview
+		}
+		peers[peer] = c
+	}
 	for peer, contact := range m.contacts {
 		if !m.newChat && !contact.Pinned() {
 			continue
@@ -338,10 +351,10 @@ func (m *chatModel) rebuildRows() {
 	m.rows = nil
 	query := strings.ToLower(strings.TrimSpace(m.query))
 	for peer, c := range peers {
-		if isOfficialAccount(peer) && query == "" && peer != m.selected {
+		if m.isOfficialAccount(peer) && query == "" && peer != m.selected {
 			continue
 		}
-		if latest, ok := m.latest[peer]; ok {
+		if latest, ok := m.latest[peer]; ok && (c.Last.ID == "" || latest.Timestamp >= c.Last.Timestamp) {
 			c.Last = latest
 		}
 		if query != "" && !strings.Contains(strings.ToLower(m.name(c.Peer)+" "+c.Peer+" "+m.contacts[c.Peer].Alias), query) {
@@ -385,6 +398,9 @@ func (m *chatModel) selectPeer(peer string) {
 		m.drafts[m.selected] = m.composer.Value()
 	}
 	m.selected = peer
+	if focused, ok := m.backend.(interface{ focus(string) }); ok {
+		focused.focus(peer)
+	}
 	m.selectedMessageID = ""
 	m.manualMessageSelection = false
 	m.composer.SetValue(m.drafts[peer])
@@ -437,6 +453,10 @@ func (m *chatModel) submit() tea.Cmd {
 	}
 	if m.offline {
 		m.notice = "Offline mode · sending is disabled"
+		return nil
+	}
+	if m.readOnly {
+		m.notice = "Read-only mode · sending is disabled"
 		return nil
 	}
 	peer, text := m.selected, m.composer.Value()
@@ -615,6 +635,12 @@ func (m chatModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			c.Flags = (previous.Flags &^ c.FlagMask) | (c.Flags & c.FlagMask)
 			m.contacts[peer] = c
+		}
+		if msg.Previews != nil {
+			m.previews = make(map[string]native.Message, len(msg.Previews))
+			for peer, preview := range msg.Previews {
+				m.previews[peer] = preview
+			}
 		}
 		m.addMessages(msg.Messages, true)
 		m.rebuildRows()
@@ -924,7 +950,7 @@ func (m chatModel) View() string {
 			name += fmt.Sprintf(" · %d", m.unread[row.Peer])
 		}
 		preview := "Start a conversation"
-		if row.Count > 0 {
+		if row.Count > 0 || row.Last.ID != "" {
 			preview = oneLine(messagePreview(row.Last))
 		}
 		if draft := m.drafts[row.Peer]; draft != "" {
@@ -1076,7 +1102,7 @@ func nativeTUI(ctx context.Context, store Store, args []string, requested string
 func (m chatModel) totalUnread() int {
 	n := 0
 	for peer, count := range m.unread {
-		if isOfficialAccount(peer) {
+		if m.isOfficialAccount(peer) {
 			continue
 		}
 		n += count
@@ -1084,9 +1110,9 @@ func (m chatModel) totalUnread() int {
 	return n
 }
 func (m chatModel) attention(bell bool) tea.Cmd {
-	title := "WeChat"
+	title := "wc-tui"
 	if n := m.totalUnread(); n > 0 {
-		title = fmt.Sprintf("WeChat — %d unread", n)
+		title = fmt.Sprintf("wc-tui — %d unread", n)
 	}
 	var notify tea.Cmd
 	if bell {

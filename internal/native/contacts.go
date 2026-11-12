@@ -11,6 +11,7 @@ type Contact struct {
 	Alias    string            `json:"alias,omitempty"`
 	Flags    uint32            `json:"flags,omitempty"`
 	FlagMask uint32            `json:"flag_mask,omitempty"`
+	Official bool              `json:"official,omitempty"`
 }
 
 func DecodeContact(raw []byte) (Contact, error) {

@@ -67,6 +67,7 @@ func mergeContacts(contacts map[string]native.Contact, commands []native.SyncCom
 type chatSyncResult struct {
 	Messages []native.Message
 	Contacts map[string]native.Contact
+	Previews map[string]native.Message
 	More     bool
 	Err      error
 	Retry    bool

@@ -2,3 +2,8 @@
 /login.png
 /state.json
 *.test
+/.venv-bridge/
+/bridge-state/
+__pycache__/
+*.pyc
+/wechatauto_logs/

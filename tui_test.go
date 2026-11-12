@@ -303,10 +303,12 @@ func TestTUIOfficialAccountsHiddenFromChatList(t *testing.T) {
 		Contacts: map[string]native.Contact{
 			"alice":   {Username: "alice", Nickname: "Alice"},
 			"gh_news": {Username: "gh_news", Nickname: "Daily News"},
+			"cmb":     {Username: "cmb4008205555", Nickname: "Bank", Official: true},
 		},
 		Messages: []native.Message{
 			{ID: "1", From: "alice", To: "me", Peer: "alice", Type: 1, Text: "hello", Timestamp: 2},
 			{ID: "2", From: "gh_news", To: "me", Peer: "gh_news", Type: 1, Text: "headline", Timestamp: 3},
+			{ID: "3", From: "cmb", To: "me", Peer: "cmb", Type: 1, Text: "statement", Timestamp: 4},
 		},
 	}
 	m := newChatModel(context.Background(), &fakeChatBackend{}, "me", native.AndroidTabletProfile, data, true)
@@ -315,6 +317,7 @@ func TestTUIOfficialAccountsHiddenFromChatList(t *testing.T) {
 	}
 	m.unread["alice"] = 1
 	m.unread["gh_news"] = 5
+	m.unread["cmb"] = 7
 	if got := m.totalUnread(); got != 1 {
 		t.Fatalf("official account unread counted: %d", got)
 	}
@@ -329,11 +332,41 @@ func TestTUIOfficialAccountsHiddenFromChatList(t *testing.T) {
 	if !found {
 		t.Fatal("search should still find official accounts")
 	}
+	m.query = "bank"
+	m.rebuildRows()
+	found = false
+	for _, row := range m.rows {
+		if row.Peer == "cmb" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("search should still find flagged official accounts")
+	}
 	m.query = ""
 	m.rebuildRows()
 	m.selectPeer("gh_news")
 	m.rebuildRows()
 	if len(m.rows) != 2 || m.selected != "gh_news" {
 		t.Fatalf("selected official account should stay visible: %#v", m.rows)
+	}
+}
+
+func TestTUIReadOnlySubmitDoesNotSend(t *testing.T) {
+	m := testChatModel()
+	backend := m.backend.(*fakeChatBackend)
+	m.readOnly = true
+	m.composer.SetValue("hello")
+	if cmd := m.submit(); cmd != nil {
+		t.Fatal("read-only TUI scheduled a send command")
+	}
+	if backend.calls != 0 {
+		t.Fatal("read-only TUI reached the backend")
+	}
+	if !strings.Contains(m.notice, "Read-only") {
+		t.Fatalf("read-only notice missing: %q", m.notice)
+	}
+	if m.composer.Value() != "hello" {
+		t.Fatal("read-only submit cleared the draft")
 	}
 }
